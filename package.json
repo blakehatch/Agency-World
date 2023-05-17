@@ -1,0 +1,14 @@
+{
+  "name": "Agency-World",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/blakehatch/Agency-World.git",
+  "author": "Blake Hatch <blakewihatch@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^20.1.7",
+    "puppeteer-core": "^20.2.1",
+    "typescript": "^5.0.4"
+  },
+  "type": "module"
+}
