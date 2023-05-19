@@ -1,4 +1,6 @@
 import puppeteer from "puppeteer-core";
+import * as dotenv from 'dotenv' // see https://github.com/motdotla/dotenv#how-do-i-use-dotenv-with-import
+dotenv.config()
 
 //Scrape LinkedIn, indeed, and builtinnyc
 
@@ -39,6 +41,8 @@ async function run() {
   try {
 
     const auth = process.env.USERNAME + ':' + process.env.PASSWORD;
+
+    console.log(auth);
 
     browser = await puppeteer.connect({
       browserWSEndpoint: `wss://${auth}@zproxy.lum-superproxy.io:9222`
