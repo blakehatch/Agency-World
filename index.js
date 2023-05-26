@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer-core";
+import { chromium } from "playwright";
 import * as dotenv from "dotenv";
 import fetch from "node-fetch";
 dotenv.config();
@@ -22,6 +22,10 @@ dotenv.config();
 //
 //   parser(el).then(console.log).catch(console.error);
 // }
+
+///////////////////////////////////////////////////////////////////
+////////////// OpenAI API Call Text Completion ////////////////////
+///////////////////////////////////////////////////////////////////
 
 const openai = async (data) => {
 
@@ -51,6 +55,10 @@ const openai = async (data) => {
   return text.replace(/^\s+|\s+$/g, '').toUpperCase();
 }
 
+///////////////////////////////////////////////////////////////////
+///////////////// Specific site scraping logic ////////////////////
+///////////////////////////////////////////////////////////////////
+
 const getSingleIndeedListingSummary = async (page, job) => {
 
   if (!job.url) {
@@ -75,27 +83,90 @@ const getSingleIndeedListingSummary = async (page, job) => {
   return job;
 }
 
-const getIndeedJobListings = async (page) => {
+const setPage = async (context, mappedData) => {
 
-  const jobs = await page.evaluate(() => {
-    const jobNodes = document.querySelectorAll('.jobsearch-ResultsList > li');
-    const jobListings = Array.from(jobNodes).slice(0,5).map(jobNode => {
-      const title = jobNode.querySelector('.jobTitle > a > span')?.innerText | "";
-      const companyName = jobNode.querySelector('.companyName')?.innerText | "";
-      const location = jobNode.querySelector('.companyLocation')?.innerText | "";
-      const salary = jobNode.querySelector('.salary-snippet-container')?.innerText | "";
-      const jobType = jobNode.querySelector('.metadataContainer > .metadata > div > svg[aria-label="Job type"]')?.nextSibling?.nodeValue | "";
-      const shift = jobNode.querySelector('.metadataContainer > .metadata > div > svg[aria-label="Shift"]')?.nextSibling?.nodeValue | "";
-      const experienceRequired = jobNode.querySelector('.metadataContainer > .attribute_snippet')?.innerText | "";
-      const description = jobNode.querySelector('.job-snippet')?.innerText | "";
-      const daysPosted = jobNode.querySelector('.result-footer > .date')?.innerText | "";
-      const url = jobNode.querySelector("a")?.getAttribute("href") | "";
-      return { title, companyName, location, salary, jobType, shift, experienceRequired, description, daysPosted, url };
+  const page = await context.newPage();
+  page.setDefaultTimeout(1_000);
+
+  try {
+    await page.goto(mappedData.url, { timeout: 2_000 });
+  } catch (error) {
+    console.log("TIMEOUT in goto", error.message);
+    await page.close();
+    return Promise.reject("TIMEOUT in goto" + error.message)
+  }
+
+  try {
+    await page.waitForSelector(mappedData.waitFor, {
+      state: "attached",
+      timeout: 5_000,
+      strict: false,
     });
-    return jobListings;
-  });
+  } catch (error) {
+    console.log("TIMEOUT in selector", error.message);
+    page.close();
+    return Promise.reject("TIMEOUT in selector" + error.message)
+  }
 
-  return jobs;
+  return page;
+}
+
+const doesExist = async (locator) => {
+
+  let count;
+  try {
+    count = await locator.count();
+  } catch (error) {
+    return false;
+  }
+  return count > 0;
+}
+
+const getIndeedJobListings = async (context, mappedData) => {
+
+  let page;
+  try {
+    page = await setPage(context, mappedData);
+  } catch (error) {
+    console.log(error)
+    return Promise.reject("couldn't set page");
+  }
+
+  const locator = page.locator(mappedData.selector);
+
+  const count = await locator.count();
+
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let curLoc = locator.nth(i);
+
+    let title = curLoc.locator(".jobTitle > a > span")
+    let company = curLoc.locator(".companyName")
+    let location = curLoc.locator(".companyLocation")
+    let salary = curLoc.locator(".salary-snippet-container")
+    let description = curLoc.locator(".job-snippet")
+    let daysPosted = curLoc.locator(".result-footer > .date")
+    let url = curLoc.locator(".resultContent a")
+
+    const toCheck = [title, company, location, salary, description, daysPosted, url];
+
+    let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
+
+    title = exists[0] ? await title.innerText() : "";
+    company = exists[1] ? await company.innerText() : "";
+    location = exists[2] ? await location.innerText() : "";
+    salary = exists[3] ? await salary.innerText() : "";
+    description = exists[4] ? await description.innerText() : "";
+    daysPosted = exists[5] ? await daysPosted.innerText() : "";
+    url = exists[6] ? "https://www.indeed.com" + await url.getAttribute("href") : "";
+
+    results.push({ title, company, location, salary, description, daysPosted, url });
+  };
+
+  await page.close();
+
+  return results;
 }
 
 const parseLinkedIn = async () => {
@@ -122,72 +193,48 @@ const getBuiltInNYCJobListings = async (page) => {
   return jobs;
 }
 
-const scrape = async (url, browser, selector, parser) => {
-  const page = await browser.newPage();
-  // await page.setViewport({
-  //   width: 1512,
-  //   height: 945,
-  // });
+///////////////////////////////////////////////////////////////////
+///////////////////////// Main Task ///////////////////////////////
+///////////////////////////////////////////////////////////////////
 
-  await page.setDefaultNavigationTimeout(2 * 60 * 1000);
+const run = async () => {
+  const browser = await chromium.launch({ headless: true });
 
-  await page.goto(url);
+  const context = await browser.newContext({
+    userAgent: "Chrome/58.0. 3029.110",
+    viewport: { width: 1512, height: 945 },
+  });
 
-  // Use the specific Indeed selector here, to make sure the page has loaded the relevant content
-  await page.waitForSelector(selector);
-
-  console.log("HTML FROM " + url + ": ");
+  const mapper = {
+    indeed: {
+      url: "https://www.indeed.com/jobs?q=designer&l=new+york%2C+ny&radius=35&fromage=7",
+      waitFor: ".jobsearch-LeftPane",
+      selector: ".jobsearch-ResultsList > li:not(:has(.nonJobContent-desktop))",
+    },
+    builtin: {
+      url: "https://www.builtinnyc.com/jobs/design-ux",
+      selector: ".v-lazy.job-item",
+    },
+  };
 
   let jobs;
   try {
-    jobs = await parser(page);
+    jobs = await getIndeedJobListings(context, mapper.indeed);
   } catch (error) {
-    console.error(error);
-    return Promise.reject("couldn't parse jobs.");
-  }
-
-  console.log(jobs);
-
-  jobs = await Promise.allSettled(jobs.map((job) => {
-    return getSingleIndeedListingSummary(page, job);
-  }))
-
-  return jobs;
-}
-
-const run = async () => {
-  let browser;
-
-  try {
-
-    const auth = process.env.USERNAME + ':' + process.env.PASSWORD;
-
-    browser = await puppeteer.connect({
-      browserWSEndpoint: `wss://${auth}@zproxy.lum-superproxy.io:9222`
-    });
-
-    const indeedSelector = ".jobsearch-ResultsList > li";
-    const builtInNYCSelector = ".v-lazy.job-item";
-
-    const jobs = await scrape('https://www.indeed.com/jobs?q=designer&l=new+york%2C+ny&radius=35&fromage=7',
-        browser, indeedSelector, getIndeedJobListings);
-
-    console.log(jobs);
-
-    // await scrape('https://www.builtinnyc.com/jobs/design-ux', browser, builtInNYCSelector, getBuiltInNYCJobListings);
-    //TODO: Find URL that works for linkedin scraper
-    //    await scrape('linkedin.com', browser);
-
-
-
+    console.log("ERROR", error)
     return;
-
-  } catch (e) {
-    console.error("scrape failed", e);
-  } finally {
-    await browser?.close();
   }
-}
+
+  await context.close();
+  await browser.close();
+
+
+  // console.log(jobs);
+
+  // await scrape('https://www.builtinnyc.com/jobs/design-ux', browser, builtInNYCSelector, getBuiltInNYCJobListings);
+  //TODO: Find URL that works for linkedin scraper
+  //    await scrape('linkedin.com', browser);
+};
 
 run();
 // openai()
