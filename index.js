@@ -90,23 +90,17 @@ const setPage = async (context, mappedData) => {
 
   try {
     await page.goto(mappedData.url, { timeout: 2_000 });
-  } catch (error) {
-    console.log("TIMEOUT in goto", error.message);
-    await page.close();
-    return Promise.reject("TIMEOUT in goto" + error.message)
-  }
-
-  try {
     await page.waitForSelector(mappedData.waitFor, {
       state: "attached",
       timeout: 5_000,
       strict: false,
     });
   } catch (error) {
-    console.log("TIMEOUT in selector", error.message);
-    page.close();
-    return Promise.reject("TIMEOUT in selector" + error.message)
+    console.log("TIMEOUT in goto / waitForSelector", error.message);
+    await page.close();
+    return Promise.reject("TIMEOUT in goto / waitForSelector" + error.message)
   }
+
 
   return page;
 }
@@ -123,6 +117,8 @@ const doesExist = async (locator) => {
 }
 
 const getIndeedJobListings = async (context, mappedData) => {
+
+  console.log("FETCHING indeed");
 
   let page;
   try {
@@ -147,7 +143,7 @@ const getIndeedJobListings = async (context, mappedData) => {
     let salary = curLoc.locator(".salary-snippet-container")
     let description = curLoc.locator(".job-snippet")
     let daysPosted = curLoc.locator(".result-footer > .date")
-    let url = curLoc.locator(".resultContent a")
+    let url = curLoc.locator(".resultContent a:nth-child(1)")
 
     const toCheck = [title, company, location, salary, description, daysPosted, url];
 
@@ -159,9 +155,9 @@ const getIndeedJobListings = async (context, mappedData) => {
     salary = exists[3] ? await salary.innerText() : "";
     description = exists[4] ? await description.innerText() : "";
     daysPosted = exists[5] ? await daysPosted.innerText() : "";
-    url = exists[6] ? "https://www.indeed.com" + await url.getAttribute("href") : "";
+    url = exists[6] ? "https://www.indeed.com" + await url.first().getAttribute("href") : "";
 
-    results.push({ title, company, location, salary, description, daysPosted, url });
+    results.push({ source: "indeed", title, company, location, salary, description, daysPosted, url });
   };
 
   await page.close();
@@ -173,24 +169,49 @@ const parseLinkedIn = async () => {
 
 }
 
-const getBuiltInNYCJobListings = async (page) => {
+const getBuiltInNYCJobListings = async (context, mappedData) => {
 
-  const jobs = await page.evaluate(() => {
-    const jobNodes = document.querySelectorAll('.v-lazy.job-item');
-    const jobListings = Array.from(jobNodes).map(jobNode => {
-      const title = jobNode.querySelector('.job-title')?.innerText;
-      const companyName = jobNode.querySelector('.company-title > .param-value')?.innerText;
-      const location = jobNode.querySelector('.info-label.location > .param-value')?.innerText;
-      const jobType = jobNode.querySelector('.info-label.hybrid > .param-value')?.innerText;
-      const description = jobNode.querySelector('.job-description')?.innerText;
-      const jobLink = jobNode.querySelector('.job-details-link')?.getAttribute("href");
-      const logoLink = jobNode.querySelector('.logo > img')?.getAttribute("src");
-      return { title, companyName, location, jobType, description, jobLink, logoLink };
-    });
-    return jobListings;
-  });
+  console.log("FETCHING builtinnyc");
 
-  return jobs;
+  let page;
+  try {
+    page = await setPage(context, mappedData);
+  } catch (error) {
+    console.log(error)
+    return Promise.reject("couldn't set page");
+  }
+
+  const locator = page.locator(mappedData.selector);
+
+  const count = await locator.count();
+
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let curLoc = locator.nth(i);
+
+    let title = curLoc.locator(".job-title")
+    let company = curLoc.locator(".company-title > .param-value")
+    let location = curLoc.locator(".info-label.location > .param-value")
+    let description = curLoc.locator(".job-description")
+    let url = curLoc.locator(".job-details-link")
+
+    const toCheck = [title, company, location, description, url];
+
+    let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
+
+    title = exists[0] ? await title.innerText() : "";
+    company = exists[1] ? await company.innerText() : "";
+    location = exists[2] ? await location.innerText() : "";
+    description = exists[3] ? await description.innerText() : "";
+    url = exists[4] ? await url.getAttribute("href") : "";
+
+    results.push({ source: "builtinnyc", title, company, location, description, url });
+  };
+
+  await page.close();
+
+  return results;
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -213,27 +234,32 @@ const run = async () => {
     },
     builtin: {
       url: "https://www.builtinnyc.com/jobs/design-ux",
-      selector: ".v-lazy.job-item",
+      waitFor: ".jobs.show_incentive",
+      selector: ".job-item",
     },
   };
 
-  let jobs;
-  try {
-    jobs = await getIndeedJobListings(context, mapper.indeed);
-  } catch (error) {
-    console.log("ERROR", error)
-    return;
-  }
+  const jobs = []
+
+  const datas = await Promise.allSettled([
+    getIndeedJobListings(context, mapper.indeed),
+    getBuiltInNYCJobListings(context, mapper.builtin)
+  ])
+
+  datas.forEach((data) => {
+    if (data.status === "fulfilled") {
+      data.value.forEach((job) => {
+        jobs.push(job);
+      }
+    )}
+  })
 
   await context.close();
   await browser.close();
 
+  console.log(jobs);
 
-  // console.log(jobs);
-
-  // await scrape('https://www.builtinnyc.com/jobs/design-ux', browser, builtInNYCSelector, getBuiltInNYCJobListings);
-  //TODO: Find URL that works for linkedin scraper
-  //    await scrape('linkedin.com', browser);
+  return;
 };
 
 run();
