@@ -49,6 +49,7 @@ const doesExist = async (locator) => {
 ///////////////////////////////////////////////////////////////////
 
 const greenhouse = async (context, url, waitFor) => {
+  const board = "greenhouse"
 
   let page;
   try {
@@ -83,7 +84,7 @@ const greenhouse = async (context, url, waitFor) => {
     title = exists[0] ? await title.innerText() : "";
     location = exists[1] ? await location.innerText() : "";
 
-    results.push({company, title, link, location, description})
+    results.push({board, company, title, link, location, description})
 
   }
 
@@ -91,6 +92,7 @@ const greenhouse = async (context, url, waitFor) => {
 }
 
 const lever = async (context, url, waitFor) => {
+  const board = "lever"
   
   let page;
   try {
@@ -125,7 +127,7 @@ const lever = async (context, url, waitFor) => {
     location = exists[1] ? await location.innerText() : "";
     link = exists[2] ? await link.getAttribute("href") : "";
 
-    results.push({company, title, link, location, description})
+    results.push({board, company, title, link, location, description})
 
   }
 
@@ -133,6 +135,7 @@ const lever = async (context, url, waitFor) => {
 }
 
 const linkedin = async (context, url, waitFor) => {
+  const board = "linkedin"
 
   let page;
   try {
@@ -167,7 +170,7 @@ const linkedin = async (context, url, waitFor) => {
     link = exists[2] ? await link.getAttribute("href") : "";
     company = exists[3] ? await company.innerText() : "";
 
-    results.push({company, title, link, location, description})
+    results.push({board, company, title, link, location, description})
 
   }
 
@@ -175,9 +178,138 @@ const linkedin = async (context, url, waitFor) => {
 
 }
 
+const jobvite = async (context, url, waitFor) => {
+  const board = "jobvite"
+
+  let page;
+  try {
+    page = await setPage(context, url, waitFor);
+  } catch (error) {
+    console.log(error)
+    return Promise.reject("couldn't set page");
+  }
+
+  const company = new URL(url).pathname.split("/")[1]
+
+  const locator = page.locator("div.job-listings ul > a");
+  const count = await locator.count();
+
+  console.log(`${count} jobs found in ${url}`)
+
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let curLoc = locator.nth(i);
+
+    let title = curLoc.locator(".jv-job-list-name")
+    let location = curLoc.locator(".jv-job-list-location")
+    let link = "";
+    let description = "";
+
+    const toCheck = [title, location];
+
+    let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
+
+    title = exists[0] ? await title.innerText() : "";
+    location = exists[1] ? (await location.textContent()).split("\n").slice(-1)[0].trim() : "";
+    link = "https://jobs.jobvite.com" + await curLoc.getAttribute("href");
+
+    results.push({board, company, title, link, location, description})
+
+  }
+
+  return results;
+}
+
+const smartrecruiters = async (context, url, waitFor) => {
+  const board = "smartrecruiters"
+
+  let page;
+  try {
+    page = await setPage(context, url, waitFor);
+  } catch (error) {
+    console.log(error)
+    return Promise.reject("couldn't set page");
+  }
+
+  const company = new URL(url).pathname.split("/").slice(-1)[0]
+
+  const locator = page.locator("div.js-openings-load section");
+  const count = await locator.count();
+
+  const interTot = page.locator("div.js-openings-load section > ul li")
+  const nJobs = await interTot.count()
+
+  console.log(`${nJobs} jobs found in ${url}`)
+
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let curLoc = locator.nth(i);
+
+    let location = await curLoc.locator("h3").innerText();
+
+    let nestedLoc = curLoc.locator(".opening-jobs li")
+    let nestedCount = await nestedLoc.count()
+
+    for (let j = 0; j < nestedCount; j++) {
+      let curNestLoc = nestedLoc.nth(j)
+      let title = curNestLoc.locator("h4")
+      let link = curNestLoc.locator("a")
+      let description = "";
+
+      const toCheck = [title, link];
+
+      let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
+
+      title = exists[0] ? await title.innerText() : "";
+      link = exists[1] ? await link.getAttribute("href") : "";
+
+      results.push({board, company, title, link, location, description})
+    }
+  }
+
+  return results;
+
+
+}
+
 ///////////////////////////////////////////////////////////////////
 ///////////////////////// Main Task ///////////////////////////////
 ///////////////////////////////////////////////////////////////////
+
+const mapper = [
+  {
+    url: "https://boards.greenhouse.io/translationunitedmastersstashed",
+    waitFor: "#main",
+    fct: greenhouse,
+  },
+  {
+    url: "https://boards.greenhouse.io/vaynermedia",
+    waitFor: "#main",
+    fct: greenhouse,
+  },
+  {
+    url: "https://jobs.lever.co/FIG?location=New%20York%2C%20NY",
+    waitFor: "div.postings-wrapper",
+    fct: lever,
+  },
+  {
+    url: "https://www.linkedin.com/jobs/manifest-jobs-worldwide/?currentJobId=3602677738&f_C=31079&position=2&pageNum=0",
+    waitFor: "main",
+    fct: linkedin,
+  },
+  {
+    url: "https://jobs.jobvite.com/essencemediacom-na/search?q=&l=New%20York,%20NY%20-%20175%20Greenwich%20Street",
+    waitFor: "article.jv-page-body",
+    fct: jobvite,
+  },
+  {
+    url: "https://careers.smartrecruiters.com/PublicisGroupe/formerly-known-as",
+    waitFor: "div.wrapper",
+    fct: smartrecruiters,
+  },
+]
 
 const runner = async () => {
 
@@ -187,29 +319,6 @@ const runner = async () => {
     userAgent: "Chrome/58.0. 3029.110",
     viewport: { width: 1512, height: 945 },
   });
-
-  const mapper = [
-    {
-      url: "https://boards.greenhouse.io/translationunitedmastersstashed",
-      waitFor: "#main",
-      fct: greenhouse,
-    },
-    {
-      url: "https://boards.greenhouse.io/vaynermedia",
-      waitFor: "#main",
-      fct: greenhouse,
-    },
-    {
-      url: "https://jobs.lever.co/FIG?location=New%20York%2C%20NY",
-      waitFor: "div.postings-wrapper",
-      fct: lever,
-    },
-    {
-      url: "https://www.linkedin.com/jobs/manifest-jobs-worldwide/?currentJobId=3602677738&f_C=31079&position=2&pageNum=0",
-      waitFor: "main",
-      fct: linkedin,
-    }
-  ]
   
   const jobs = []
 
@@ -218,8 +327,6 @@ const runner = async () => {
       const {url, waitFor, fct} = data
       return fct(context, url, waitFor)
     }))
-
-    console.log(datas);
   
     datas.forEach((data) => {
       if (data.status === "fulfilled") {
