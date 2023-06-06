@@ -1,96 +1,24 @@
 import { chromium } from "playwright";
 import * as dotenv from "dotenv";
-import fetch from "node-fetch";
+// import fetch from "node-fetch";
+import fs from "fs";
 dotenv.config();
 
-//Scrape LinkedIn, indeed, and builtinnyc
-
-// async function scrape(url, browser, selector, parser) {
-//   const page = await browser.newPage();
-//
-//   await page.setDefaultNavigationTimeout(2 * 60 * 1000);
-//
-//   await page.goto(url);
-//
-//   await page.waitForSelector(selector);
-//
-//   const el = await page.$(selector);
-//
-//   //const text = await el.evaluate(e => e.innerHTML);
-//
-//   console.log("HTML FROM " + url + ": ");
-//
-//   parser(el).then(console.log).catch(console.error);
-// }
 
 ///////////////////////////////////////////////////////////////////
-////////////// OpenAI API Call Text Completion ////////////////////
+///////////////// General Web Scraping Helpers ////////////////////
 ///////////////////////////////////////////////////////////////////
 
-const openai = async (data) => {
+const setPage = async (context, url, waitFor) => {
 
-  const prompt = `Here is a job description:\n\n${data}\n\nIs this description based off a job posting from a design agency? (YES/NO)`;
-
-  const body = {
-    "model": "text-davinci-003",
-    "prompt": prompt,
-    "max_tokens": 3,
-  };
-
-  const headers = {
-    "Authorization": `Bearer ${process.env.OPENAI_KEY}`,
-    "Content-Type": "application/json",
-  };
-
-  const response = await fetch("https://api.openai.com/v1/completions", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const result = await response.json();
-
-  const text = result.choices[0].text
-  
-  return text.replace(/^\s+|\s+$/g, '').toUpperCase();
-}
-
-///////////////////////////////////////////////////////////////////
-///////////////// Specific site scraping logic ////////////////////
-///////////////////////////////////////////////////////////////////
-
-const getSingleIndeedListingSummary = async (page, job) => {
-
-  if (!job.url) {
-    return "NAN";
-  }
-
-  try {
-    await page.goto(job.url);
-    await page.waitForSelector("#jobDescriptionText");
-  } catch(error) {
-    return "NAN";
-  }
-
-  const description = await page.evaluate(() => {
-    return document.getElementById("jobDescriptionText")?.innerText;
-  })
-
-  const isAgency = await openai(description);
-
-  job.isAgency = isAgency;
-
-  return job;
-}
-
-const setPage = async (context, mappedData) => {
+  console.log(`FETCHING ${url}`);
 
   const page = await context.newPage();
   page.setDefaultTimeout(1_000);
 
   try {
-    await page.goto(mappedData.url, { timeout: 2_000 });
-    await page.waitForSelector(mappedData.waitFor, {
+    await page.goto(url, { timeout: 2_000 });
+    await page.waitForSelector(waitFor, {
       state: "attached",
       timeout: 5_000,
       strict: false,
@@ -100,7 +28,6 @@ const setPage = async (context, mappedData) => {
     await page.close();
     return Promise.reject("TIMEOUT in goto / waitForSelector" + error.message)
   }
-
 
   return page;
 }
@@ -116,109 +43,144 @@ const doesExist = async (locator) => {
   return count > 0;
 }
 
-const getIndeedJobListings = async (context, mappedData) => {
 
-  console.log("FETCHING indeed");
+///////////////////////////////////////////////////////////////////
+///////////////// Specific site scraping logic ////////////////////
+///////////////////////////////////////////////////////////////////
+
+const greenhouse = async (context, url, waitFor) => {
 
   let page;
   try {
-    page = await setPage(context, mappedData);
+    page = await setPage(context, url, waitFor);
   } catch (error) {
     console.log(error)
     return Promise.reject("couldn't set page");
   }
 
-  const locator = page.locator(mappedData.selector);
+  const company = await page.locator("h1").innerText();
 
+  const locator = page.locator("div.opening");
   const count = await locator.count();
+
+  console.log(`${count} jobs found in ${url}`)
 
   const results = [];
 
   for (let i = 0; i < count; i++) {
     let curLoc = locator.nth(i);
 
-    let title = curLoc.locator(".jobTitle > a > span")
-    let company = curLoc.locator(".companyName")
-    let location = curLoc.locator(".companyLocation")
-    let salary = curLoc.locator(".salary-snippet-container")
-    let description = curLoc.locator(".job-snippet")
-    let daysPosted = curLoc.locator(".result-footer > .date")
-    let url = curLoc.locator(".resultContent a:nth-child(1)")
+    let title = curLoc.locator("a")
+    let location = curLoc.locator("span.location")
+    let link = "";
+    let description = "";
 
-    const toCheck = [title, company, location, salary, description, daysPosted, url];
+    const toCheck = [title, location];
 
     let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
 
+    link = exists[0] ? "https://boards.greenhouse.io" + await title.getAttribute("href") : "";
     title = exists[0] ? await title.innerText() : "";
-    company = exists[1] ? await company.innerText() : "";
-    location = exists[2] ? await location.innerText() : "";
-    salary = exists[3] ? await salary.innerText() : "";
-    description = exists[4] ? await description.innerText() : "";
-    daysPosted = exists[5] ? await daysPosted.innerText() : "";
-    url = exists[6] ? "https://www.indeed.com" + await url.first().getAttribute("href") : "";
+    location = exists[1] ? await location.innerText() : "";
 
-    results.push({ source: "indeed", title, company, location, salary, description, daysPosted, url });
-  };
+    results.push({company, title, link, location, description})
 
-  await page.close();
+  }
 
   return results;
 }
 
-const parseLinkedIn = async () => {
-
-}
-
-const getBuiltInNYCJobListings = async (context, mappedData) => {
-
-  console.log("FETCHING builtinnyc");
-
+const lever = async (context, url, waitFor) => {
+  
   let page;
   try {
-    page = await setPage(context, mappedData);
+    page = await setPage(context, url, waitFor);
   } catch (error) {
     console.log(error)
     return Promise.reject("couldn't set page");
   }
 
-  const locator = page.locator(mappedData.selector);
+  const company = new URL(url).pathname.replace("/","");
 
+  const locator = page.locator("div.posting");
   const count = await locator.count();
+
+  console.log(`${count} jobs found in ${url}`)
 
   const results = [];
 
   for (let i = 0; i < count; i++) {
     let curLoc = locator.nth(i);
 
-    let title = curLoc.locator(".job-title")
-    let company = curLoc.locator(".company-title > .param-value")
-    let location = curLoc.locator(".info-label.location > .param-value")
-    let description = curLoc.locator(".job-description")
-    let url = curLoc.locator(".job-details-link")
+    let title = curLoc.locator("[data-qa='posting-name']")
+    let location = curLoc.locator("span.location")
+    let link = curLoc.locator(".posting-title");
+    let description = "";
 
-    const toCheck = [title, company, location, description, url];
+    const toCheck = [title, location, link];
 
     let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
 
     title = exists[0] ? await title.innerText() : "";
-    company = exists[1] ? await company.innerText() : "";
-    location = exists[2] ? await location.innerText() : "";
-    description = exists[3] ? await description.innerText() : "";
-    url = exists[4] ? await url.getAttribute("href") : "";
+    location = exists[1] ? await location.innerText() : "";
+    link = exists[2] ? await link.getAttribute("href") : "";
 
-    results.push({ source: "builtinnyc", title, company, location, description, url });
-  };
+    results.push({company, title, link, location, description})
 
-  await page.close();
+  }
 
   return results;
+}
+
+const linkedin = async (context, url, waitFor) => {
+
+  let page;
+  try {
+    page = await setPage(context, url, waitFor);
+  } catch (error) {
+    console.log(error)
+    return Promise.reject("couldn't set page");
+  }
+
+  const locator = page.locator(".jobs-search__results-list li > div");
+  const count = await locator.count();
+
+  console.log(`${count} jobs found in ${url}`)
+
+  const results = [];
+
+  for (let i = 0; i < count; i++) {
+    let curLoc = locator.nth(i);
+
+    let title = curLoc.locator("h3")
+    let location = curLoc.locator(".job-search-card__location")
+    let link = curLoc.locator("a:not(.hidden-nested-link)");
+    let company = curLoc.locator("h4");
+    let description = "";
+
+    const toCheck = [title, location, link, company];
+
+    let exists = await Promise.all(toCheck.map((locator) => doesExist(locator)));
+
+    title = exists[0] ? await title.innerText() : "";
+    location = exists[1] ? await location.innerText() : "";
+    link = exists[2] ? await link.getAttribute("href") : "";
+    company = exists[3] ? await company.innerText() : "";
+
+    results.push({company, title, link, location, description})
+
+  }
+
+  return results;
+
 }
 
 ///////////////////////////////////////////////////////////////////
 ///////////////////////// Main Task ///////////////////////////////
 ///////////////////////////////////////////////////////////////////
 
-const run = async () => {
+const runner = async () => {
+
   const browser = await chromium.launch({ headless: true });
 
   const context = await browser.newContext({
@@ -226,41 +188,70 @@ const run = async () => {
     viewport: { width: 1512, height: 945 },
   });
 
-  const mapper = {
-    indeed: {
-      url: "https://www.indeed.com/jobs?q=designer&l=new+york%2C+ny&radius=35&fromage=7",
-      waitFor: ".jobsearch-LeftPane",
-      selector: ".jobsearch-ResultsList > li:not(:has(.nonJobContent-desktop))",
+  const mapper = [
+    {
+      url: "https://boards.greenhouse.io/translationunitedmastersstashed",
+      waitFor: "#main",
+      fct: greenhouse,
     },
-    builtin: {
-      url: "https://www.builtinnyc.com/jobs/design-ux",
-      waitFor: ".jobs.show_incentive",
-      selector: ".job-item",
+    {
+      url: "https://boards.greenhouse.io/vaynermedia",
+      waitFor: "#main",
+      fct: greenhouse,
     },
-  };
-
+    {
+      url: "https://jobs.lever.co/FIG?location=New%20York%2C%20NY",
+      waitFor: "div.postings-wrapper",
+      fct: lever,
+    },
+    {
+      url: "https://www.linkedin.com/jobs/manifest-jobs-worldwide/?currentJobId=3602677738&f_C=31079&position=2&pageNum=0",
+      waitFor: "main",
+      fct: linkedin,
+    }
+  ]
+  
   const jobs = []
 
-  const datas = await Promise.allSettled([
-    getIndeedJobListings(context, mapper.indeed),
-    getBuiltInNYCJobListings(context, mapper.builtin)
-  ])
+  try {
+    const datas = await Promise.allSettled(mapper.map((data) => {
+      const {url, waitFor, fct} = data
+      return fct(context, url, waitFor)
+    }))
 
-  datas.forEach((data) => {
-    if (data.status === "fulfilled") {
-      data.value.forEach((job) => {
-        jobs.push(job);
+    console.log(datas);
+  
+    datas.forEach((data) => {
+      if (data.status === "fulfilled") {
+        data.value.forEach((job) => {
+          jobs.push(job)
+        })
       }
-    )}
-  })
-
-  await context.close();
-  await browser.close();
+    })
+  } catch (error) {
+    console.log(error)
+  } finally {
+    await context.close();
+    await browser.close();
+  }
 
   console.log(jobs);
 
-  return;
-};
+  return jobs
+}
 
-run();
-// openai()
+const writeCSV = () => {
+
+  let data = "name,type\n";
+
+  const write = ["me,idk", "you,hdk"]
+
+  data = data + write.join("\n");
+
+  fs.writeFile("./test.csv", data, (err) => {
+    console.log(err || "done");
+  });
+}
+
+// writeCSV();
+runner();
