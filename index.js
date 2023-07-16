@@ -94,7 +94,7 @@ const main = async () => {
   data += dataWrite.join("\n")
 
   fs.writeFile("./listings.tsv", data, (err) => {
-    console.log(err || "done");
+    console.log(err || "\nDONE --- Written to listings.tsv\n");
   });
 }
 
