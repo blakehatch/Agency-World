@@ -26,4 +26,8 @@ export const mapper = [
     url: "https://careers.smartrecruiters.com/PublicisGroupe/formerly-known-as",
     fct: smartrecruiters,
   },
+  {
+    url: "https://www.ogilvy.com/work-with-us",
+    fct: greenhouse,
+  },
 ]
